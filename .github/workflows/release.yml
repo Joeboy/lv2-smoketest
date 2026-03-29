@@ -22,15 +22,19 @@ jobs:
     name: Build (Linux)
     runs-on: ubuntu-latest
     container: ubuntu:20.04
+    defaults:
+      run:
+        shell: bash
 
     steps:
       - name: Install system dependencies
         env:
           DEBIAN_FRONTEND: noninteractive
           TZ: UTC
+        shell: sh
         run: |
           apt-get update
-          apt-get install -y git curl ca-certificates build-essential pkg-config liblilv-dev patchelf
+          apt-get install -y bash git curl ca-certificates build-essential pkg-config liblilv-dev patchelf
 
       - name: Checkout
         uses: actions/checkout@v6
