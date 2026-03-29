@@ -22,12 +22,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          - os: ubuntu-22.04
             asset_name: lv2-smoketest-linux-x86_64.tar.gz
-            archive_cmd: tar -czf lv2-smoketest-linux-x86_64.tar.gz -C target/release lv2-smoketest
           - os: macos-13
             asset_name: lv2-smoketest-macos-x86_64.tar.gz
-            archive_cmd: tar -czf lv2-smoketest-macos-x86_64.tar.gz -C target/release lv2-smoketest
           - os: windows-latest
             asset_name: lv2-smoketest-windows-x86_64.zip
 
@@ -41,7 +39,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y pkg-config liblilv-dev
+          sudo apt-get install -y pkg-config liblilv-dev patchelf
 
       - name: Install macOS dependencies
         if: runner.os == 'macOS'
@@ -74,14 +72,93 @@ jobs:
         shell: msys2 {0}
         run: cargo build --release
 
-      - name: Create archive (Linux/macOS)
-        if: runner.os != 'Windows'
-        run: ${{ matrix.archive_cmd }}
+      - name: Bundle runtime libs (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          rm -rf package
+          mkdir -p package/lib
+          cp target/release/lv2-smoketest package/
+
+          for lib in liblilv-0.so.0 libsord-0.so.0 libserd-0.so.0 libsratom-0.so.0 libzix-0.so.1; do
+            lib_path="$(ldconfig -p | awk -v name="$lib" '$1 == name { print $NF; exit }')"
+            if [ -z "$lib_path" ]; then
+              echo "Missing runtime library: $lib"
+              exit 1
+            fi
+            cp -L "$lib_path" package/lib/
+          done
+
+          patchelf --set-rpath '$ORIGIN/lib' package/lv2-smoketest
+          tar -czf "${{ matrix.asset_name }}" -C package .
+
+      - name: Bundle runtime libs (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          set -euo pipefail
+          rm -rf package
+          mkdir -p package/lib
+          cp target/release/lv2-smoketest package/
+
+          BREW_PREFIX="$(brew --prefix)"
+          libs=(
+            liblilv-0.dylib
+            libsord-0.dylib
+            libserd-0.dylib
+            libsratom-0.dylib
+            libzix-0.dylib
+          )
+
+          for lib in "${libs[@]}"; do
+            src="$BREW_PREFIX/lib/$lib"
+            if [ ! -f "$src" ]; then
+              echo "Missing runtime library: $src"
+              exit 1
+            fi
+            cp "$src" package/lib/
+            install_name_tool -change "$src" "@executable_path/lib/$lib" package/lv2-smoketest
+          done
+
+          for dylib in package/lib/*.dylib; do
+            base="$(basename "$dylib")"
+            install_name_tool -id "@executable_path/lib/$base" "$dylib"
+            for dep in "${libs[@]}"; do
+              install_name_tool -change "$BREW_PREFIX/lib/$dep" "@executable_path/lib/$dep" "$dylib" || true
+            done
+          done
+
+          tar -czf "${{ matrix.asset_name }}" -C package .
+
+      - name: Bundle runtime libs (Windows)
+        if: runner.os == 'Windows'
+        shell: msys2 {0}
+        run: |
+          set -euo pipefail
+          rm -rf package
+          mkdir -p package
+          cp target/release/lv2-smoketest.exe package/
+
+          for dll in \
+            liblilv-0-0.dll \
+            libsord-0-0.dll \
+            libserd-0-0.dll \
+            libsratom-0-0.dll \
+            libzix-0-0.dll \
+            libgcc_s_seh-1.dll \
+            libstdc++-6.dll \
+            libwinpthread-1.dll; do
+            src="/mingw64/bin/$dll"
+            if [ ! -f "$src" ]; then
+              echo "Missing runtime DLL: $src"
+              exit 1
+            fi
+            cp "$src" package/
+          done
 
       - name: Create archive (Windows)
         if: runner.os == 'Windows'
         shell: powershell
-        run: Compress-Archive -Path target\release\lv2-smoketest.exe -DestinationPath ${{ matrix.asset_name }} -Force
+        run: Compress-Archive -Path package\* -DestinationPath ${{ matrix.asset_name }} -Force
 
       - name: Upload packaged artifact
         uses: actions/upload-artifact@v4
