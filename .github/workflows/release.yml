@@ -1,0 +1,110 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag name for the release (for example, v1.2.3)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            asset_name: lv2-smoketest-linux-x86_64.tar.gz
+            archive_cmd: tar -czf lv2-smoketest-linux-x86_64.tar.gz -C target/release lv2-smoketest
+          - os: macos-13
+            asset_name: lv2-smoketest-macos-x86_64.tar.gz
+            archive_cmd: tar -czf lv2-smoketest-macos-x86_64.tar.gz -C target/release lv2-smoketest
+          - os: windows-latest
+            asset_name: lv2-smoketest-windows-x86_64.zip
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config liblilv-dev
+
+      - name: Install macOS dependencies
+        if: runner.os == 'macOS'
+        run: |
+          brew update
+          brew install pkg-config lilv
+
+      - name: Setup MSYS2 (Windows dependencies)
+        if: runner.os == 'Windows'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            mingw-w64-x86_64-rust
+            mingw-w64-x86_64-toolchain
+            mingw-w64-x86_64-pkgconf
+            mingw-w64-x86_64-lilv
+
+      - name: Setup Rust toolchain (non-Windows)
+        if: runner.os != 'Windows'
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build (Linux/macOS)
+        if: runner.os != 'Windows'
+        run: cargo build --release
+
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
+        shell: msys2 {0}
+        run: cargo build --release
+
+      - name: Create archive (Linux/macOS)
+        if: runner.os != 'Windows'
+        run: ${{ matrix.archive_cmd }}
+
+      - name: Create archive (Windows)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: Compress-Archive -Path target\release\lv2-smoketest.exe -DestinationPath ${{ matrix.asset_name }} -Force
+
+      - name: Upload packaged artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset_name }}
+          path: ${{ matrix.asset_name }}
+
+  release:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download all packaged artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          files: |
+            dist/**/*.tar.gz
+            dist/**/*.zip
+          generate_release_notes: true
