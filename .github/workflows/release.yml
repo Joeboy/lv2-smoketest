@@ -84,14 +84,24 @@ jobs:
           mkdir -p package/lib
           cp target/release/lv2-smoketest package/
 
-          for lib in liblilv-0.so.0 libsord-0.so.0 libserd-0.so.0 libsratom-0.so.0 libzix-0.so.1; do
-            lib_path="$(ldconfig -p | awk -v name="$lib" '$1 == name { print $NF; exit }')"
-            if [ -z "$lib_path" ]; then
-              echo "Missing runtime library: $lib"
-              exit 1
-            fi
-            cp -L "$lib_path" package/lib/
-          done
+          copy_first_available() {
+            local lib_path=""
+            for candidate in "$@"; do
+              lib_path="$(ldconfig -p | awk -v name="$candidate" '$1 == name { print $NF; exit }')"
+              if [ -n "$lib_path" ]; then
+                cp -L "$lib_path" package/lib/
+                return 0
+              fi
+            done
+            echo "Missing runtime library candidates: $*"
+            exit 1
+          }
+
+          copy_first_available liblilv-0.so.0
+          copy_first_available libsord-0.so.0
+          copy_first_available libserd-0.so.0
+          copy_first_available libsratom-0.so.0
+          copy_first_available libzix-0.so.1 libzix-0.so.0
 
           patchelf --set-rpath '$ORIGIN/lib' package/lv2-smoketest
           tar -czf "${{ matrix.asset_name }}" -C package .
