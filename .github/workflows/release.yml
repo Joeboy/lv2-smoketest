@@ -25,7 +25,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-22.04
+          - os: ubuntu-20.04
             asset_name: lv2-smoketest-linux-x86_64.tar.gz
           - os: macos-latest
             asset_name: lv2-smoketest-macos.tar.gz
