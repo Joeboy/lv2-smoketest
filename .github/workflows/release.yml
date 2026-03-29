@@ -18,66 +18,29 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
-  build:
-    name: Build (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-20.04
-            asset_name: lv2-smoketest-linux-x86_64.tar.gz
-          - os: macos-latest
-            asset_name: lv2-smoketest-macos.tar.gz
-          - os: windows-latest
-            asset_name: lv2-smoketest-windows-x86_64.zip
+  build-linux:
+    name: Build (Linux)
+    runs-on: ubuntu-latest
+    container: ubuntu:20.04
 
     steps:
+      - name: Install system dependencies
+        run: |
+          apt-get update
+          apt-get install -y git curl ca-certificates build-essential pkg-config liblilv-dev patchelf
+
       - name: Checkout
         uses: actions/checkout@v6
         with:
           ref: ${{ github.event.inputs.tag || github.ref }}
 
-      - name: Install Linux dependencies
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y pkg-config liblilv-dev patchelf
-
-      - name: Install macOS dependencies
-        if: runner.os == 'macOS'
-        run: |
-          brew update
-          command -v pkg-config >/dev/null 2>&1 || brew install pkgconf
-          brew list lilv >/dev/null 2>&1 || brew install lilv
-
-      - name: Setup MSYS2 (Windows dependencies)
-        if: runner.os == 'Windows'
-        uses: msys2/setup-msys2@v2
-        with:
-          msystem: MINGW64
-          update: true
-          install: >-
-            mingw-w64-x86_64-rust
-            mingw-w64-x86_64-toolchain
-            mingw-w64-x86_64-pkgconf
-            mingw-w64-x86_64-lilv
-
-      - name: Setup Rust toolchain (non-Windows)
-        if: runner.os != 'Windows'
+      - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Build (Linux/macOS)
-        if: runner.os != 'Windows'
+      - name: Build
         run: cargo build --release
 
-      - name: Build (Windows)
-        if: runner.os == 'Windows'
-        shell: msys2 {0}
-        run: cargo build --release
-
-      - name: Bundle runtime libs (Linux)
-        if: runner.os == 'Linux'
+      - name: Bundle runtime libs
         run: |
           set -euo pipefail
           rm -rf package
@@ -115,7 +78,63 @@ jobs:
           copy_linked_lib_if_present libzix
 
           patchelf --set-rpath '$ORIGIN/lib' package/lv2-smoketest/lv2-smoketest
-          tar -czf "${{ matrix.asset_name }}" -C package lv2-smoketest
+          tar -czf lv2-smoketest-linux-x86_64.tar.gz -C package lv2-smoketest
+
+      - name: Upload packaged artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: lv2-smoketest-linux-x86_64.tar.gz
+          path: lv2-smoketest-linux-x86_64.tar.gz
+
+  build:
+    name: Build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            asset_name: lv2-smoketest-macos.tar.gz
+          - os: windows-latest
+            asset_name: lv2-smoketest-windows-x86_64.zip
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Install macOS dependencies
+        if: runner.os == 'macOS'
+        run: |
+          brew update
+          command -v pkg-config >/dev/null 2>&1 || brew install pkgconf
+          brew list lilv >/dev/null 2>&1 || brew install lilv
+
+      - name: Setup MSYS2 (Windows dependencies)
+        if: runner.os == 'Windows'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            mingw-w64-x86_64-rust
+            mingw-w64-x86_64-toolchain
+            mingw-w64-x86_64-pkgconf
+            mingw-w64-x86_64-lilv
+
+      - name: Setup Rust toolchain
+        if: runner.os == 'macOS'
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build (macOS)
+        if: runner.os == 'macOS'
+        run: cargo build --release
+
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
+        shell: msys2 {0}
+        run: cargo build --release
 
       - name: Bundle runtime libs (macOS)
         if: runner.os == 'macOS'
@@ -185,7 +204,7 @@ jobs:
 
   release:
     name: Publish GitHub Release
-    needs: build
+    needs: [build-linux, build]
     runs-on: ubuntu-latest
 
     steps:
