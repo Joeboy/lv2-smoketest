@@ -1,0 +1,4 @@
+/target
+
+# Vim swapfiles:
+*.sw[op]
