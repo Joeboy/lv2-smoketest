@@ -14,6 +14,9 @@ on:
 permissions:
   contents: write
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
 jobs:
   build:
     name: Build (${{ matrix.os }})
@@ -24,14 +27,14 @@ jobs:
         include:
           - os: ubuntu-22.04
             asset_name: lv2-smoketest-linux-x86_64.tar.gz
-          - os: macos-13
-            asset_name: lv2-smoketest-macos-x86_64.tar.gz
+          - os: macos-latest
+            asset_name: lv2-smoketest-macos.tar.gz
           - os: windows-latest
             asset_name: lv2-smoketest-windows-x86_64.zip
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: ${{ github.event.inputs.tag || github.ref }}
 
@@ -161,7 +164,7 @@ jobs:
         run: Compress-Archive -Path package\* -DestinationPath ${{ matrix.asset_name }} -Force
 
       - name: Upload packaged artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.asset_name }}
           path: ${{ matrix.asset_name }}
@@ -173,7 +176,7 @@ jobs:
 
     steps:
       - name: Download all packaged artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: dist
 
