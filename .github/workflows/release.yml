@@ -1,0 +1,204 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag name for the release (for example, v1.2.3)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  build:
+    name: Build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            asset_name: lv2-smoketest-linux-x86_64.tar.gz
+          - os: macos-latest
+            asset_name: lv2-smoketest-macos.tar.gz
+          - os: windows-latest
+            asset_name: lv2-smoketest-windows-x86_64.zip
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config liblilv-dev patchelf
+
+      - name: Install macOS dependencies
+        if: runner.os == 'macOS'
+        run: |
+          brew update
+          command -v pkg-config >/dev/null 2>&1 || brew install pkgconf
+          brew list lilv >/dev/null 2>&1 || brew install lilv
+
+      - name: Setup MSYS2 (Windows dependencies)
+        if: runner.os == 'Windows'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            mingw-w64-x86_64-rust
+            mingw-w64-x86_64-toolchain
+            mingw-w64-x86_64-pkgconf
+            mingw-w64-x86_64-lilv
+
+      - name: Setup Rust toolchain (non-Windows)
+        if: runner.os != 'Windows'
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build (Linux/macOS)
+        if: runner.os != 'Windows'
+        run: cargo build --release
+
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
+        shell: msys2 {0}
+        run: cargo build --release
+
+      - name: Bundle runtime libs (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          rm -rf package
+          mkdir -p package/lv2-smoketest/lib
+          cp target/release/lv2-smoketest package/lv2-smoketest/
+
+          # Copy exactly what the binary is linked against for the lilv stack.
+          ldd_output="$(ldd target/release/lv2-smoketest)"
+
+          copy_linked_lib() {
+            local prefix="$1"
+            local lib_path=""
+            lib_path="$(printf '%s\n' "$ldd_output" | awk -v pfx="$prefix" '$1 ~ ("^" pfx) && $3 ~ /^\// { print $3; exit }')"
+            if [ -z "$lib_path" ]; then
+              echo "Missing runtime library with prefix: $prefix"
+              echo "$ldd_output"
+              exit 1
+            fi
+            cp -L "$lib_path" package/lv2-smoketest/lib/
+          }
+
+          copy_linked_lib_if_present() {
+            local prefix="$1"
+            local lib_path=""
+            lib_path="$(printf '%s\n' "$ldd_output" | awk -v pfx="$prefix" '$1 ~ ("^" pfx) && $3 ~ /^\// { print $3; exit }')"
+            if [ -n "$lib_path" ]; then
+              cp -L "$lib_path" package/lv2-smoketest/lib/
+            fi
+          }
+
+          copy_linked_lib liblilv
+          copy_linked_lib libsord
+          copy_linked_lib libserd
+          copy_linked_lib libsratom
+          copy_linked_lib_if_present libzix
+
+          patchelf --set-rpath '$ORIGIN/lib' package/lv2-smoketest/lv2-smoketest
+          tar -czf "${{ matrix.asset_name }}" -C package lv2-smoketest
+
+      - name: Bundle runtime libs (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          set -euo pipefail
+          rm -rf package
+          mkdir -p package/lv2-smoketest/lib
+          cp target/release/lv2-smoketest package/lv2-smoketest/
+
+          BREW_PREFIX="$(brew --prefix)"
+          libs=(
+            liblilv-0.dylib
+            libsord-0.dylib
+            libserd-0.dylib
+            libsratom-0.dylib
+            libzix-0.dylib
+          )
+
+          for lib in "${libs[@]}"; do
+            src="$BREW_PREFIX/lib/$lib"
+            if [ ! -f "$src" ]; then
+              echo "Missing runtime library: $src"
+              exit 1
+            fi
+            cp "$src" package/lv2-smoketest/lib/
+            install_name_tool -change "$src" "@executable_path/lib/$lib" package/lv2-smoketest/lv2-smoketest
+          done
+
+          for dylib in package/lv2-smoketest/lib/*.dylib; do
+            base="$(basename "$dylib")"
+            install_name_tool -id "@executable_path/lib/$base" "$dylib"
+            for dep in "${libs[@]}"; do
+              install_name_tool -change "$BREW_PREFIX/lib/$dep" "@executable_path/lib/$dep" "$dylib" || true
+            done
+          done
+
+          tar -czf "${{ matrix.asset_name }}" -C package lv2-smoketest
+
+      - name: Bundle runtime libs (Windows)
+        if: runner.os == 'Windows'
+        shell: msys2 {0}
+        run: |
+          set -euo pipefail
+          rm -rf package
+          mkdir -p package
+          cp target/release/lv2-smoketest.exe package/
+
+          # Use ldd to find every non-system DLL the binary depends on,
+          # then copy those that live under /mingw64 (i.e. not Windows system DLLs).
+          ldd target/release/lv2-smoketest.exe \
+            | awk '/\/mingw64\/bin\// { print $3 }' \
+            | xargs -I{} cp -L {} package/
+
+      - name: Create archive (Windows)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          New-Item -ItemType Directory -Path package\lv2-smoketest | Out-Null
+          Get-ChildItem -Path package -Exclude lv2-smoketest | Move-Item -Destination package\lv2-smoketest
+          Compress-Archive -Path package\lv2-smoketest -DestinationPath ${{ matrix.asset_name }} -Force
+
+      - name: Upload packaged artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.asset_name }}
+          path: ${{ matrix.asset_name }}
+
+  release:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download all packaged artifacts
+        uses: actions/download-artifact@v8
+        with:
+          path: dist
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ github.event.inputs.tag || github.ref_name }}" \
+            --repo "${{ github.repository }}" \
+            --generate-notes \
+            dist/**/*.tar.gz dist/**/*.zip
