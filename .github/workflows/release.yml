@@ -84,24 +84,26 @@ jobs:
           mkdir -p package/lib
           cp target/release/lv2-smoketest package/
 
-          copy_first_available() {
+          # Copy exactly what the binary is linked against for the lilv stack.
+          ldd_output="$(ldd target/release/lv2-smoketest)"
+
+          copy_linked_lib() {
+            local prefix="$1"
             local lib_path=""
-            for candidate in "$@"; do
-              lib_path="$(ldconfig -p | awk -v name="$candidate" '$1 == name { print $NF; exit }')"
-              if [ -n "$lib_path" ]; then
-                cp -L "$lib_path" package/lib/
-                return 0
-              fi
-            done
-            echo "Missing runtime library candidates: $*"
-            exit 1
+            lib_path="$(printf '%s\n' "$ldd_output" | awk -v pfx="$prefix" '$1 ~ ("^" pfx) && $3 ~ /^\// { print $3; exit }')"
+            if [ -z "$lib_path" ]; then
+              echo "Missing runtime library with prefix: $prefix"
+              echo "$ldd_output"
+              exit 1
+            fi
+            cp -L "$lib_path" package/lib/
           }
 
-          copy_first_available liblilv-0.so.0
-          copy_first_available libsord-0.so.0
-          copy_first_available libserd-0.so.0
-          copy_first_available libsratom-0.so.0
-          copy_first_available libzix-0.so.1 libzix-0.so.0
+          copy_linked_lib liblilv
+          copy_linked_lib libsord
+          copy_linked_lib libserd
+          copy_linked_lib libsratom
+          copy_linked_lib libzix
 
           patchelf --set-rpath '$ORIGIN/lib' package/lv2-smoketest
           tar -czf "${{ matrix.asset_name }}" -C package .
