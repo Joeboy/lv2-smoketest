@@ -25,6 +25,9 @@ jobs:
 
     steps:
       - name: Install system dependencies
+        env:
+          DEBIAN_FRONTEND: noninteractive
+          TZ: UTC
         run: |
           apt-get update
           apt-get install -y git curl ca-certificates build-essential pkg-config liblilv-dev patchelf
