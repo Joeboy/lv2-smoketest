@@ -48,7 +48,8 @@ jobs:
         if: runner.os == 'macOS'
         run: |
           brew update
-          brew install pkg-config lilv
+          command -v pkg-config >/dev/null 2>&1 || brew install pkgconf
+          brew list lilv >/dev/null 2>&1 || brew install lilv
 
       - name: Setup MSYS2 (Windows dependencies)
         if: runner.os == 'Windows'
