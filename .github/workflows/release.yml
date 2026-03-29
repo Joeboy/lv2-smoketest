@@ -99,11 +99,20 @@ jobs:
             cp -L "$lib_path" package/lib/
           }
 
+          copy_linked_lib_if_present() {
+            local prefix="$1"
+            local lib_path=""
+            lib_path="$(printf '%s\n' "$ldd_output" | awk -v pfx="$prefix" '$1 ~ ("^" pfx) && $3 ~ /^\// { print $3; exit }')"
+            if [ -n "$lib_path" ]; then
+              cp -L "$lib_path" package/lib/
+            fi
+          }
+
           copy_linked_lib liblilv
           copy_linked_lib libsord
           copy_linked_lib libserd
           copy_linked_lib libsratom
-          copy_linked_lib libzix
+          copy_linked_lib_if_present libzix
 
           patchelf --set-rpath '$ORIGIN/lib' package/lv2-smoketest
           tar -czf "${{ matrix.asset_name }}" -C package .
