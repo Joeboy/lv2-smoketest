@@ -163,22 +163,11 @@ jobs:
           mkdir -p package
           cp target/release/lv2-smoketest.exe package/
 
-          for dll in \
-            liblilv-0-0.dll \
-            libsord-0-0.dll \
-            libserd-0-0.dll \
-            libsratom-0-0.dll \
-            libzix-0-0.dll \
-            libgcc_s_seh-1.dll \
-            libstdc++-6.dll \
-            libwinpthread-1.dll; do
-            src="/mingw64/bin/$dll"
-            if [ ! -f "$src" ]; then
-              echo "Missing runtime DLL: $src"
-              exit 1
-            fi
-            cp "$src" package/
-          done
+          # Use ldd to find every non-system DLL the binary depends on,
+          # then copy those that live under /mingw64 (i.e. not Windows system DLLs).
+          ldd target/release/lv2-smoketest.exe \
+            | awk '/\/mingw64\/bin\// { print $3 }' \
+            | xargs -I{} cp -L {} package/
 
       - name: Create archive (Windows)
         if: runner.os == 'Windows'
