@@ -34,7 +34,7 @@ pub fn run_plugin_once(plugin_uri: &str, sample_rate: f64, frame_count: usize) -
     let plugin = world
         .plugins()
         .plugin(&plugin_uri_node)
-        .ok_or_else(|| anyhow!("Plugin not found for URI: {plugin_uri}"))?;
+        .ok_or_else(|| anyhow!("Plug-in not found for URI: {plugin_uri}"))?;
 
     let required_features: Vec<String> = plugin
         .required_features()
